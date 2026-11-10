@@ -1,0 +1,152 @@
+# Canton DevKit — CCTools Campaign build, for Akun B (istri Nur)
+#
+# SIAP PAKAI MALAM INI (2026-11-10). File ini dibuat untuk repo GitHub AKUN A
+# (milik istri Nur, @Libee) — BUKAN repo akun utama Nur.
+#
+# Cara pakai (ringkas; detail lengkap di DEVKIT_AKUN_A_TONIGHT.md):
+#   1. Di GitHub Akun B: buat repo baru (mis. "canton-devkit-campaign-b").
+#   2. Upload file ini ke: .github/workflows/devkit-campaign.yml
+#   3. Tab Actions -> "DevKit Campaign (Akun B)" -> Run workflow.
+#   4. Tunggu selesai, unduh artifact "devkit-akun-b-proof" (screenshot
+#      Tokens + log version/balances), posting dari HP/X Akun B.
+#
+# YANG DIJAGA SUPAYA ENTRI A BERSIH (disepakati di chat 2026-11-10 ~13:55 WIB):
+#   - Semua identitas milik istri Nur: GitHub A, X A, akun CCTools A.
+#   - Kode run HARUS hasil run A sendiri. JANGAN pakai ulang kode akun
+#     utama (CCT-YFXATFPH) atau screenshot akun utama.
+#   - Runner GitHub Actions itu VM sekali jalan yang dihancurkan setelah
+#     job selesai, jadi tiap run melahirkan kode CCT baru — itu yang
+#     diinginkan di sini.
+#
+# YANG SUDAH DIVERIFIKASI DARI SUMBER RESMI (bukan tebakan):
+#   - Release campaign: v0.18.2-cctools.1, commit ce692a7
+#     (github.com/bitdynamics-ab/canton-devkit/releases/tag/v0.18.2-cctools.1)
+#   - Install + perintah: docs/cctools-campaign.md di tag yang sama.
+#   - Prasyarat: Docker + Compose, disk 20 GB disarankan, doctor yang
+#     memutuskan lolos/tidak. Panduan menulis kode campaign tersimpan di
+#     ~/.canton-devkit/campaign-id dan "an identifier for this installation,
+#     not proof of a unique person".
+#
+# RISIKO TEKNIS YANG MASIH TERBUKA (jujur, belum teruji di Actions):
+#   - Disk runner GitHub (~14 GB bebas yang dilaporkan) lebih sempit dari
+#     rekomendasi 20 GB, sementara localnet + image Docker makan belasan GB.
+#     Workflow ini sudah membebaskan disk dulu (langkah free-disk), tapi
+#     kalau tetap kehabisan disk, `localnet up` akan gagal — dan itu
+#     jawaban yang sah: berhenti di situ, jangan dipaksa.
+#   - RAM runner 16 GB (di atas rekomendasi doctor 12 GB) — mestinya lolos
+#     tanpa warning seperti di InstaBox (8 GB, 1 warning) kemarin.
+#   - Screenshot UI: diambil headless dengan Playwright + Chrome bawaan
+#     runner. Kalau langkah screenshot gagal, artefak log CLI (version +
+#     balances) tetap terunggah sebagai bukti — screenshot bisa diulang
+#     manual dari log, bukan alasan mengulang seluruh run.
+#
+# TIDAK ADA DANA ASLI DI SINI: build campaign ini "not for production or
+# real funds" (release notes). Semua token DEMO, jaringan lokal saja.
+
+name: DevKit Campaign (Akun B)
+
+on:
+  workflow_dispatch: # dijalankan manual dari tab Actions — jangan auto-run
+
+permissions:
+  contents: read
+
+jobs:
+  devkit-campaign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cek + bebaskan disk (localnet butuh belasan GB)
+        run: |
+          echo "--- sebelum ---"
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          docker system prune -af || true
+          echo "--- sesudah ---"
+          df -h
+          free -h
+
+      - name: Install canton-devkit (campaign build, pinned)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/bitdynamics-ab/canton-devkit/v0.18.2-cctools.1/install.sh | VERSION=0.18.2-cctools.1 sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Version + kode campaign (bukti #1)
+        run: |
+          canton-devkit version | tee devkit-version.txt
+          echo "---"
+          echo "Pastikan tampil: v0.18.2-cctools.1 (ce692a7) + campaign code: CCT-XXXXXXXX"
+          echo "Kode ini HARUS beda dari CCT-YFXATFPH (kode akun utama). Kalau sama, STOP — jangan lanjut."
+
+      - name: localnet doctor
+        run: canton-devkit localnet doctor
+
+      - name: Naikkan localnet cctools-demo
+        timeout-minutes: 30
+        run: canton-devkit localnet up cctools-demo
+
+      - name: Status localnet
+        run: canton-devkit localnet status cctools-demo
+
+      - name: Mint token demo (1.000.000 DEMO)
+        timeout-minutes: 15
+        run: |
+          canton-devkit localnet token demo --instance cctools-demo
+          canton-devkit localnet token balances --instance cctools-demo | tee devkit-balances.txt
+
+      - name: Nyalakan UI di background
+        run: |
+          nohup canton-devkit localnet ui > devkit-ui.log 2>&1 &
+          echo $! > devkit-ui.pid
+          for i in $(seq 1 30); do
+            if grep -q "Web UI listening" devkit-ui.log 2>/dev/null; then
+              echo "UI nyala:"; grep "Web UI listening" devkit-ui.log; break
+            fi
+            sleep 2
+          done
+          cat devkit-ui.log
+
+      - name: Screenshot UI (Tokens + kode run)
+        continue-on-error: true
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm i playwright-core >/dev/null 2>&1
+          cat > shot.mjs <<'EOF'
+          import { chromium } from 'playwright-core';
+          const browser = await chromium.launch({
+            executablePath: '/usr/bin/google-chrome',
+            args: ['--no-sandbox'],
+          });
+          const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+          await page.goto('http://127.0.0.1:7777/', { waitUntil: 'networkidle', timeout: 60000 });
+          await page.waitForTimeout(3000);
+          await page.screenshot({ path: 'devkit-overview.png' });
+          const tokens = page.getByText('Tokens', { exact: true }).first();
+          await tokens.click({ timeout: 15000 });
+          await page.waitForTimeout(3000);
+          await page.screenshot({ path: 'devkit-tokens.png' });
+          await browser.close();
+          console.log('screenshot ok');
+          EOF
+          node shot.mjs
+          ls -la devkit-*.png || echo "TIDAK ADA PNG — lihat log, artefak CLI tetap diunggah"
+
+      - name: Unggah bukti (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devkit-akun-b-proof
+          path: |
+            devkit-version.txt
+            devkit-balances.txt
+            devkit-ui.log
+            devkit-overview.png
+            devkit-tokens.png
+          if-no-files-found: warn
+
+      - name: Matikan localnet (rapi-rapi)
+        if: always()
+        run: canton-devkit localnet down cctools-demo || true
